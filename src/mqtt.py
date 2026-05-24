@@ -26,7 +26,9 @@ def _same_login(a, b):
 
 def on_connect(client, userdata, flags, reason_code, properties):
     if not reason_code.is_failure:
+        # One wildcard topic for telemetry from all devices.
         client.subscribe(TOPIC_SUB_ALL_TELEMETRY)
+        # Optional status topic (ONLINE/OFFLINE).
         client.subscribe(TOPIC_SUB_ALL_STATUS)
         print(f"[MQTT] Connected, subscribed to {TOPIC_SUB_ALL_TELEMETRY} and {TOPIC_SUB_ALL_STATUS}")
     else:
@@ -40,6 +42,7 @@ def on_message(client, userdata, msg):
         return
 
     if msg.topic.endswith("/status"):
+        # Dashboard status is tracked only for configured local login.
         if not _same_login(sender_login, LOGIN):
             return
         try:
@@ -61,6 +64,7 @@ def on_message(client, userdata, msg):
 
     normalized, error = save_telemetry(sender_login, payload)
     if error:
+        # Invalid payload must not crash application.
         print(f"[MQTT] Ignored message from {sender_login}: {error}")
         return
 

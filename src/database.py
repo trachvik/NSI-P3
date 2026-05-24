@@ -83,7 +83,22 @@ def _is_valid_iso8601(value):
         return False
 
 
+def _parse_float(value, field_name):
+    try:
+        return float(value), None
+    except (TypeError, ValueError):
+        return None, f"Invalid {field_name}"
+
+
+def _parse_int(value, field_name):
+    try:
+        return int(value), None
+    except (TypeError, ValueError):
+        return None, f"Invalid {field_name}"
+
+
 def validate_telemetry_payload(payload):
+    # Common validation used by both MQTT ingest and REST POST.
     if not isinstance(payload, dict):
         return None, "Payload is not a JSON object"
 
@@ -121,6 +136,7 @@ def validate_telemetry_payload(payload):
 
 
 def save_telemetry(login, payload):
+    # Main "upsert device + insert measurement" logic.
     normalized, error = validate_telemetry_payload(payload)
     if error:
         return None, error
@@ -172,13 +188,17 @@ def save_telemetry(login, payload):
             )
 
         # Insert one measurement row for each valid message.
-        conn.execute(
+        insert_cursor = conn.execute(
             "INSERT INTO measurements (device_id, timestamp, temperature) VALUES (?, ?, ?)",
             (device["id"], normalized["timestamp"], normalized["temperature"]),
         )
 
         conn.commit()
-        return normalized, None
+        result = dict(normalized)
+        result["device_id"] = device["id"]
+        result["measurement_id"] = insert_cursor.lastrowid
+        result["login"] = login
+        return result, None
     finally:
         conn.close()
 
@@ -188,7 +208,7 @@ def get_devices():
     try:
         rows = conn.execute(
             """
-            SELECT login, first_seen, last_seen, last_uptime, measure_period, message_count
+            SELECT id, login, first_seen, last_seen, last_uptime, measure_period, message_count
             FROM devices
             ORDER BY login ASC
             """
@@ -203,11 +223,27 @@ def get_device(login):
     try:
         row = conn.execute(
             """
-            SELECT login, first_seen, last_seen, last_uptime, measure_period, message_count
+            SELECT id, login, first_seen, last_seen, last_uptime, measure_period, message_count
             FROM devices
             WHERE login = ?
             """,
             (login,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_device_by_id(device_id):
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT id, login, first_seen, last_seen, last_uptime, measure_period, message_count
+            FROM devices
+            WHERE id = ?
+            """,
+            (device_id,),
         ).fetchone()
         return dict(row) if row else None
     finally:
@@ -230,7 +266,7 @@ def get_measurements(login=None, limit=100):
         if login:
             rows = conn.execute(
                 """
-                SELECT d.login, m.timestamp, m.temperature
+                SELECT m.id, d.id AS device_id, d.login, m.timestamp, m.temperature
                 FROM measurements m
                 JOIN devices d ON d.id = m.device_id
                 WHERE d.login = ?
@@ -242,7 +278,7 @@ def get_measurements(login=None, limit=100):
         else:
             rows = conn.execute(
                 """
-                SELECT d.login, m.timestamp, m.temperature
+                SELECT m.id, d.id AS device_id, d.login, m.timestamp, m.temperature
                 FROM measurements m
                 JOIN devices d ON d.id = m.device_id
                 ORDER BY m.id DESC
@@ -256,3 +292,119 @@ def get_measurements(login=None, limit=100):
         return data
     finally:
         conn.close()
+
+
+def get_telemetry_by_id(telemetry_id):
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT m.id, d.id AS device_id, d.login, m.timestamp, m.temperature
+            FROM measurements m
+            JOIN devices d ON d.id = m.device_id
+            WHERE m.id = ?
+            """,
+            (telemetry_id,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def delete_telemetry_by_id(telemetry_id):
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT id FROM measurements WHERE id = ?", (telemetry_id,)).fetchone()
+        if row is None:
+            return False
+        conn.execute("DELETE FROM measurements WHERE id = ?", (telemetry_id,))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def delete_device_by_id(device_id):
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT id FROM devices WHERE id = ?", (device_id,)).fetchone()
+        if row is None:
+            return False
+        conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def create_telemetry_from_api(payload):
+    # REST input format is slightly different than MQTT payload.
+    if not isinstance(payload, dict):
+        return None, "Invalid JSON body"
+
+    device_field = payload.get("device")
+    if device_field is None:
+        return None, "Missing field: device"
+
+    device_login = None
+    existing_device = None
+
+    # Accept both numeric device_id and string login in API body.
+    if isinstance(device_field, int) or (isinstance(device_field, str) and device_field.isdigit()):
+        # API can send device as numeric id.
+        device_id, err = _parse_int(device_field, "device")
+        if err:
+            return None, err
+        existing_device = get_device_by_id(device_id)
+        if existing_device is None:
+            return None, "Device not found"
+        device_login = existing_device["login"]
+    elif isinstance(device_field, str):
+        # API can also send device as login string.
+        device_login = device_field.strip()
+        if not device_login:
+            return None, "Invalid device"
+        existing_device = get_device(device_login)
+    else:
+        return None, "Invalid device"
+
+    timestamp = payload.get("timestamp")
+    if timestamp is None:
+        return None, "Missing field: timestamp"
+    if not _is_valid_iso8601(timestamp):
+        return None, "Invalid timestamp format"
+
+    measure_period_raw = payload.get("measure-period", payload.get("measure_period"))
+    if measure_period_raw is None:
+        return None, "Missing field: measure-period"
+    measure_period, err = _parse_int(measure_period_raw, "measure-period")
+    if err:
+        return None, err
+
+    temperature = payload.get("temperature")
+    if temperature is None:
+        return None, "Missing field: temperature"
+    temperature, err = _parse_float(temperature, "temperature")
+    if err:
+        return None, err
+
+    uptime_raw = payload.get("uptime")
+    if uptime_raw is None:
+        if existing_device is not None:
+            uptime = existing_device["last_uptime"]
+        else:
+            # New device from API without uptime uses zero as startup fallback.
+            uptime = 0.0
+    else:
+        uptime, err = _parse_float(uptime_raw, "uptime")
+        if err:
+            return None, err
+
+    normalized = {
+        "timestamp": timestamp,
+        "temperature": temperature,
+        "measure_period": measure_period,
+        "uptime": uptime,
+        "led_state": payload.get("led"),
+    }
+    return save_telemetry(device_login, normalized)

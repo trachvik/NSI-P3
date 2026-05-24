@@ -4,7 +4,7 @@ from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, session
 from dotenv import load_dotenv
 
-from api import device_state, telemetry_history
+from api import api_bp, device_state, telemetry_history
 from database import init_db
 from mqtt import init_mqtt, publish_period_command
 from matplotlib_viz import get_filtered_data, build_plot_url
@@ -14,18 +14,21 @@ ENV_PATH = Path(__file__).with_name(".env")
 load_dotenv(dotenv_path=ENV_PATH)
 
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
+# Fail-fast: secret key is required for secure session cookies.
 if not FLASK_SECRET_KEY:
     raise RuntimeError("Missing FLASK_SECRET_KEY in src/.env")
 
 
 app = Flask(__name__, template_folder="../templates")
 app.secret_key = FLASK_SECRET_KEY
+app.register_blueprint(api_bp)
 
 # Create/verify DB schema on server startup.
 init_db()
 
 
 def _convert_temp(temp_c, unit):
+    # Internal storage is Celsius; convert only for UI rendering.
     if temp_c is None:
         return None
     if unit == "F":
@@ -34,6 +37,7 @@ def _convert_temp(temp_c, unit):
 
 
 def _get_temp_unit():
+    # Temperature unit is stored in user session.
     unit = (session.get("temp_unit") or "C").upper()
     if unit not in ("C", "F"):
         unit = "C"
@@ -42,6 +46,7 @@ def _get_temp_unit():
 
 
 def _render_dashboard(error=None, success=None, args=None):
+    # Shared render helper so all responses keep same page context.
     args = args or {}
     temp_unit = _get_temp_unit()
 
@@ -84,6 +89,7 @@ def set_temperature_unit():
 
 @app.route("/update_telemetry_period")
 def update_telemetry_period():
+    # Expected format: /update_telemetry_period?period=X
     period_raw = request.args.get("period")
     if period_raw is None:
         return _render_dashboard(error="Missing URL parameter 'period'.", args=request.args), 400
@@ -96,10 +102,12 @@ def update_telemetry_period():
     if not 1 <= period <= 300:
         return _render_dashboard(error="Period must be in range of 1 s to 5 min.", args=request.args), 400
 
+    # Valid input -> publish command via MQTT.
     publish_period_command(period)
     return _render_dashboard(success=f"Period update command sent: {period} s", args=request.args)
 
 
 if __name__ == "__main__":
+    # MQTT listener runs in background thread.
     init_mqtt()
     app.run(host="0.0.0.0", port=5050, debug=True, use_reloader=False)
