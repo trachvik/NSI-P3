@@ -11,9 +11,18 @@
         <p><strong>Success:</strong> {{ success }}</p>
     {% endif %}
 
+    <form action="/set_temperature_unit" method="post" style="margin-bottom: 12px;">
+        <label for="temp_unit"><strong>Preferred temperature unit:</strong></label>
+        <select id="temp_unit" name="temp_unit" onchange="this.form.submit()">
+            <option value="C" {% if temp_unit == 'C' %}selected{% endif %}>Celsius</option>
+            <option value="F" {% if temp_unit == 'F' %}selected{% endif %}>Fahrenheit</option>
+        </select>
+        <input type="hidden" name="limit_n" value="{{ limit_n }}">
+    </form>
+
     {% if telemetry %}
         <p>Last sample timestamp: <strong>{{ telemetry['timestamp'] }}</strong></p>
-        <p>Temperature: <strong>{{ '%.2f'|format(telemetry['temperature']) }} °C</strong></p>
+        <p>Temperature: <strong>{{ '%.2f'|format(display_temperature) }} °{{ temp_unit }}</strong></p>
     {% else %}
         <p><em>No telemetry data received yet.</em></p>
     {% endif %}
