@@ -3,9 +3,9 @@
 Tento projekt rozsiruje IoT system o:
 
 1. ukladani telemetrie z MQTT do SQLite,
-2. REST API nad ulozenymi daty,
-3. pokrocile filtrovani a razeni telemetrie,
-4. webovy dashboard historickych dat na /dashboard.
+1. REST API nad ulozenymi daty,
+1. pokrocile filtrovani a razeni telemetrie,
+1. webovy dashboard historickych dat na /dashboard.
 
 ## Struktura projektu
 
@@ -26,13 +26,13 @@ Tento projekt rozsiruje IoT system o:
 ## Instalace
 
 1. Vytvor virtualni prostredi a aktivuj ho.
-2. Nainstaluj zavislosti:
+1. Nainstaluj zavislosti:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Vytvor src/.env podle src/.env.example a dopln hodnoty.
+1. Vytvor src/.env podle src/.env.example a dopln hodnoty.
 
 Povinne promenne v .env:
 
@@ -55,19 +55,17 @@ Schema je ulozeno v souboru schema.sql.
 
 Tabulky:
 
-1. devices
-	- id, login, first_seen, last_seen, last_uptime, measure_period, message_count
-2. measurements
-	- id, device_id, timestamp, temperature
+- devices: id, login, first_seen, last_seen, last_uptime, measure_period, message_count
+- measurements: id, device_id, timestamp, temperature
 
 Mezi measurements.device_id a devices.id je cizi klic s ON DELETE CASCADE.
 
 Pri startu aplikace se automaticky:
 
 1. vytvori DB soubor, pokud neexistuje,
-2. aplikje schema,
-3. overi sloupce tabulek,
-4. pri neplatnem schematu tabulky znovu vytvori podle schema.sql.
+1. aplikje schema,
+1. overi sloupce tabulek,
+1. pri neplatnem schematu tabulky znovu vytvori podle schema.sql.
 
 ## MQTT ingest
 
@@ -79,9 +77,9 @@ Odber temat:
 Pri prijmu telemetry:
 
 1. zkontroluje se JSON payload,
-2. z topicu se ziska login zarizeni,
-3. vlozi se measurement,
-4. aktualizuje/zaklada se zaznam v devices.
+1. z topicu se ziska login zarizeni,
+1. vlozi se measurement,
+1. aktualizuje/zaklada se zaznam v devices.
 
 Nevalidni zprava aplikaci nesmi ukoncit - jen se zaloguje a ignoruje.
 
@@ -90,10 +88,10 @@ Nevalidni zprava aplikaci nesmi ukoncit - jen se zaloguje a ignoruje.
 Zakladni endpointy:
 
 - GET /api/devices
-- GET /api/devices/<device_id>
-- GET /api/telemetry/<id>
-- DELETE /api/telemetry/<id>
-- DELETE /api/devices/<device_id>
+- GET /api/devices/{device_id}
+- GET /api/telemetry/{id}
+- DELETE /api/telemetry/{id}
+- DELETE /api/devices/{device_id}
 - POST /api/telemetry
 
 Pokrocile dotazovani:
@@ -112,20 +110,6 @@ Historicky dashboard je dostupny na:
 Obsahuje:
 
 1. vyber zarizeni,
-2. absolutni okno (from, to),
-3. relativni okno (velikost + jednotka second/minute/hour/day),
-4. graf teploty v case.
-
-## Testovani
-
-Pokrocile API testy:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\test_api.ps1
-```
-
-Volitelne lze prepnout base URL:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\test_api.ps1 -BaseUrl http://127.0.0.1:5051
-```
+1. absolutni okno (from, to),
+1. relativni okno (velikost + jednotka second/minute/hour/day),
+1. graf teploty v case.
