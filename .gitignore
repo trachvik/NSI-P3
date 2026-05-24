@@ -19,3 +19,5 @@ src/telemetry.db
 # OS
 Thumbs.db
 .DS_Store
+
+*.ps1

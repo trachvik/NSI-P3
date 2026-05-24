@@ -83,6 +83,10 @@ def _is_valid_iso8601(value):
         return False
 
 
+def is_valid_iso8601(value):
+    return _is_valid_iso8601(value)
+
+
 def _parse_float(value, field_name):
     try:
         return float(value), None
@@ -290,6 +294,89 @@ def get_measurements(login=None, limit=100):
         data = [dict(row) for row in rows]
         data.reverse()
         return data
+    finally:
+        conn.close()
+
+
+def get_telemetry_filtered(device_id=None, from_ts=None, to_ts=None, sort_field="timestamp", sort_order="desc"):
+    allowed_sort_fields = {
+        "timestamp": "m.timestamp",
+        "temperature": "m.temperature",
+    }
+    allowed_sort_orders = {
+        "asc": "ASC",
+        "desc": "DESC",
+    }
+
+    sort_field_sql = allowed_sort_fields[sort_field]
+    sort_order_sql = allowed_sort_orders[sort_order]
+
+    where_parts = []
+    params = []
+
+    if device_id is not None:
+        where_parts.append("m.device_id = ?")
+        params.append(device_id)
+    if from_ts is not None:
+        where_parts.append("m.timestamp >= ?")
+        params.append(from_ts)
+    if to_ts is not None:
+        where_parts.append("m.timestamp <= ?")
+        params.append(to_ts)
+
+    where_sql = ""
+    if where_parts:
+        where_sql = " WHERE " + " AND ".join(where_parts)
+
+    query = f"""
+        SELECT m.id, m.device_id, d.login, m.timestamp, m.temperature
+        FROM measurements m
+        JOIN devices d ON d.id = m.device_id
+        {where_sql}
+        ORDER BY {sort_field_sql} {sort_order_sql}, m.id {sort_order_sql}
+    """
+
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(query, tuple(params)).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_telemetry_filtered_count(device_id=None, from_ts=None, to_ts=None):
+    where_parts = []
+    params = []
+
+    if device_id is not None:
+        where_parts.append("device_id = ?")
+        params.append(device_id)
+    if from_ts is not None:
+        where_parts.append("timestamp >= ?")
+        params.append(from_ts)
+    if to_ts is not None:
+        where_parts.append("timestamp <= ?")
+        params.append(to_ts)
+
+    where_sql = ""
+    if where_parts:
+        where_sql = " WHERE " + " AND ".join(where_parts)
+
+    query = f"SELECT COUNT(*) AS cnt FROM measurements{where_sql}"
+
+    conn = get_db_connection()
+    try:
+        row = conn.execute(query, tuple(params)).fetchone()
+        return int(row["cnt"])
+    finally:
+        conn.close()
+
+
+def get_total_telemetry_count():
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT COUNT(*) AS cnt FROM measurements").fetchone()
+        return int(row["cnt"])
     finally:
         conn.close()
 
