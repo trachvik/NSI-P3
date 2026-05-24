@@ -10,6 +10,7 @@ from config import SSID, PASSWORD, MQTT_BROKER, LOGIN
 toggle_counter = 0
 
 TOPIC_PUB_TELEMETRY = f"cvut/nsi/2026/{LOGIN}/telemetry".encode('utf-8')
+TOPIC_STATUS = f"cvut/nsi/2026/{LOGIN}/status".encode('utf-8')
 TOPIC_SUB_LED = f"cvut/nsi/2026/{LOGIN}/led".encode('utf-8')
 # Only this device should react to period updates for this login.
 TOPIC_SUB_PERIOD = f"cvut/nsi/2026/{LOGIN}/period".encode('utf-8')
@@ -26,6 +27,7 @@ led.value(0)
 warning_timer = machine.Timer()
 
 publish_requested = False
+last_ping_ms = time.ticks_ms()
 
 def publish_isr(t):
     global publish_requested
@@ -101,8 +103,12 @@ def mqtt_callback(topic, msg):
             try:
                 data = json.loads(msg.decode("utf-8"))
                 temperature = data.get("temperature")
+                try:
+                    temperature_value = float(temperature)
+                except (TypeError, ValueError):
+                    temperature_value = None
                 # Ignore invalid/non-numeric temperature.
-                if isinstance(temperature, (int, float)) and temperature > 30:
+                if temperature_value is not None and temperature_value > 30:
                     warning_timer.init(period=100, mode=machine.Timer.ONE_SHOT, callback=warning_isr)
             except ValueError:
                 print("Invalid JSON")
@@ -115,7 +121,7 @@ wlan.disconnect()  # Reset previous Wi-Fi state and start clean.
 if not connect_wifi(timeout_s=15): # Wait up to 15 seconds for Wi-Fi connection
     raise RuntimeError("Wi-Fi connection failed")
 
-ntptime.host = "ntp.cesnet.cz"
+ntptime.host = "tik.cesnet.cz"
 try:
     ntptime.settime()
 except OSError:
@@ -126,32 +132,54 @@ publish_timer.init(period=measure_period_s * 1000, mode=machine.Timer.PERIODIC, 
 
 
 client_id = f"rpi_pico_{LOGIN}_{machine.unique_id().hex()}"
-client = MQTTClient(client_id=client_id, server=MQTT_BROKER)
+# Keepalive enables broker-side dead client detection for Last Will delivery.
+client = MQTTClient(client_id=client_id, server=MQTT_BROKER, keepalive=10)
 client.set_callback(mqtt_callback)
+# Last Will is sent by broker when this client disconnects unexpectedly.
+client.set_last_will(TOPIC_STATUS, b"OFFLINE", retain=True, qos=0)
 client.connect()
+client.publish(TOPIC_STATUS, b"ONLINE", qos=1, retain=True)
 client.subscribe(TOPIC_SUB_LED)
 client.subscribe(TOPIC_SUB_PERIOD)
 client.subscribe(TOPIC_SUB_ALL_TELEMETRY)
 
 
-while True:
-    # Non-blocking "asynchronous" MQTT polling.
-    client.check_msg()   
-    if publish_requested:
-        publish_requested = False
-        try:
-            sensor.measure()
-            payload = {
-                "timestamp": iso8601_utc_now(),
-                "uptime": time.ticks_ms() / 1000,
-                "led_state": led.value(),
-                "temperature": sensor.temperature(),
-                "measure_period": measure_period_s
-            }
-            payload_json = json.dumps(payload)
-            client.publish(TOPIC_PUB_TELEMETRY, payload_json.encode('utf-8'), qos=1)
-            print(f"Published: {payload_json}")
-            
-        except Exception:
-            pass
+try:
+    while True:
+        # Non-blocking "asynchronous" MQTT polling.
+        client.check_msg()
+        # Periodic ping keeps MQTT session fresh and helps broker detect hard power loss.
+        now = time.ticks_ms()
+        if time.ticks_diff(now, last_ping_ms) >= 3000:
+            try:
+                client.ping()
+            except Exception:
+                pass
+            last_ping_ms = now
+        if publish_requested:
+            publish_requested = False
+            try:
+                measure_start_ts = iso8601_utc_now()
+                sensor.measure()
+                payload = {
+                    "timestamp": measure_start_ts,
+                    "uptime": time.ticks_ms() / 1000,
+                    "led_state": led.value(),
+                    "temperature": "{:.2f}".format(sensor.temperature()),
+                    "measure_period": measure_period_s
+                }
+                payload_json = json.dumps(payload)
+                client.publish(TOPIC_PUB_TELEMETRY, payload_json.encode('utf-8'), qos=1)
+                print(f"Published: {payload_json}")
+            except Exception:
+                pass
+except KeyboardInterrupt:
+    pass
+finally:
+    # Best effort OFFLINE for graceful stop; power loss relies on Last Will.
+    try:
+        client.publish(TOPIC_STATUS, b"OFFLINE", qos=1, retain=True)
+        client.disconnect()
+    except Exception:
+        pass
 

@@ -16,6 +16,7 @@ device_state = {
     "temperature": None,
     "led_state": None,
     "measure_period": None,
+    "status": "UNKNOWN",
 }
 
 telemetry_history = []
@@ -27,14 +28,21 @@ def topic_login(topic):
 
 
 def update_from_payload(payload):
-    device_state["timestamp"] = payload.get("timestamp", device_state["timestamp"])
-    device_state["temperature"] = payload.get("temperature", device_state["temperature"])
-    device_state["led_state"] = payload.get("led_state", device_state["led_state"])
+    if "timestamp" in payload:
+        device_state["timestamp"] = payload["timestamp"]
+    if "temperature" in payload:
+        device_state["temperature"] = payload["temperature"]
+    if "led_state" in payload:
+        device_state["led_state"] = payload["led_state"]
 
     temp = payload.get("temperature")
+    try:
+        temp_value = float(temp)
+    except (TypeError, ValueError):
+        temp_value = None
     timestamp = payload.get("timestamp")
-    if isinstance(temp, (int, float)) and isinstance(timestamp, str):
-        telemetry_history.append({"timestamp": timestamp, "temperature": temp})
+    if temp_value is not None and isinstance(timestamp, str):
+        telemetry_history.append({"timestamp": timestamp, "temperature": temp_value})
         if len(telemetry_history) > 2000:
             telemetry_history.pop(0)
 
@@ -42,3 +50,9 @@ def update_from_payload(payload):
         device_state["measure_period"] = payload["measure_period"]
     elif "period" in payload:
         device_state["measure_period"] = payload["period"]
+
+
+def update_status(status_payload):
+    status = (status_payload or "").strip().upper()
+    if status in ("ONLINE", "OFFLINE"):
+        device_state["status"] = status
