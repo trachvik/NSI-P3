@@ -6,6 +6,7 @@ import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 
 from api import LOGIN, topic_login, update_from_payload, update_status
+from database import save_telemetry
 
 
 ENV_PATH = Path(__file__).with_name(".env")
@@ -19,6 +20,10 @@ TOPIC_PUB_PERIOD = f"cvut/nsi/2026/{LOGIN}/period"
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 
 
+def _same_login(a, b):
+    return (a or "").strip().lower() == (b or "").strip().lower()
+
+
 def on_connect(client, userdata, flags, reason_code, properties):
     if not reason_code.is_failure:
         client.subscribe(TOPIC_SUB_ALL_TELEMETRY)
@@ -29,11 +34,14 @@ def on_connect(client, userdata, flags, reason_code, properties):
 
 
 def on_message(client, userdata, msg):
+    # Login is extracted from topic: cvut/nsi/2026/<login>/...
     sender_login = topic_login(msg.topic)
-    if (sender_login or "").strip().lower() != (LOGIN or "").strip().lower():
+    if not sender_login:
         return
 
     if msg.topic.endswith("/status"):
+        if not _same_login(sender_login, LOGIN):
+            return
         try:
             status_payload = msg.payload.decode("utf-8")
         except UnicodeError:
@@ -51,7 +59,16 @@ def on_message(client, userdata, msg):
         print("[MQTT] Invalid telemetry payload")
         return
 
-    update_from_payload(payload)
+    normalized, error = save_telemetry(sender_login, payload)
+    if error:
+        print(f"[MQTT] Ignored message from {sender_login}: {error}")
+        return
+
+    # Keep dashboard in-memory state only for configured local login.
+    if _same_login(sender_login, LOGIN):
+        payload_for_state = dict(payload)
+        payload_for_state.update(normalized)
+        update_from_payload(payload_for_state)
 
 
 def publish_period_command(period):

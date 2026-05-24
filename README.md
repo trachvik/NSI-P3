@@ -9,7 +9,9 @@ Communication between device and server is implemented only via MQTT.
 - `src/main_server.py` - Flask entrypoint for dashboard
 - `src/mqtt.py` - MQTT client for server
 - `src/api.py` - shared in-memory state
+- `src/database.py` - SQLite database layer
 - `src/matplotlib_viz.py` - telemetry visualization helpers
+- `schema.sql` - database schema
 - `templates/` - HTML templates
 - `requirements.txt` - Python dependencies
 - `.gitignore` - ignored local files
@@ -38,6 +40,11 @@ pip install -r requirements.txt
 python src/main_server.py
 ```
 
+## REST API
+
+- `GET /api/devices`
+- `GET /api/devices/<login>`
+- `GET /api/measurements?login=<login>&limit=100`
 
 ## Firmware Features
 
