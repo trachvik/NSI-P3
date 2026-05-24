@@ -11,10 +11,13 @@
         <p><strong>Success:</strong> {{ success }}</p>
     {% endif %}
 
-    <p>Login: <strong>{{ state.login }}</strong></p>
-    <p>Timestamp: <strong>{{ state.timestamp }}</strong></p>
-    <p>Temperature: <strong>{{ state.temperature }}</strong></p>
-    <p>Humidity: <strong>{{ state.humidity }}</strong></p>
+    {% if telemetry %}
+        <p>Last sample timestamp: <strong>{{ telemetry['timestamp'] }}</strong></p>
+        <p>Temperature: <strong>{{ '%.2f'|format(telemetry['temperature']) }} °C</strong></p>
+    {% else %}
+        <p><em>No telemetry data received yet.</em></p>
+    {% endif %}
+
     <p>LED state: <strong>{{ state.led_state }}</strong></p>
     <p>Measure period: <strong>{{ state.measure_period }}</strong></p>
 
@@ -24,4 +27,16 @@
         <input type="number" id="period" name="period" min="1" max="300" required>
         <button type="submit">Update</button>
     </form>
+
+    <hr>
+    <h3>Telemetry Visualization</h3>
+    <form method="get" style="margin-bottom: 20px;">
+        <label for="limit_n">Last N records:</label>
+        <input type="number" id="limit_n" name="limit_n" value="{{ limit_n }}" min="1" style="width: 80px;">
+        <button type="submit">Filter</button>
+    </form>
+
+    {% if plot_url %}
+        <img src="data:image/png;base64,{{ plot_url }}" style="max-width: 100%; border: 1px solid #ccc;">
+    {% endif %}
 {% endblock %}

@@ -146,7 +146,6 @@ while True:
                 "uptime": time.ticks_ms() / 1000,
                 "led_state": led.value(),
                 "temperature": sensor.temperature(),
-                "humidity": sensor.humidity(),
                 "measure_period": measure_period_s
             }
             payload_json = json.dumps(payload)
