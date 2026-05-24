@@ -1,56 +1,131 @@
-# NSI Mini Project 2
+# NSI - Miniprojekt 3 (IoT + SQLite + REST API)
 
-Asynchronous distributed IoT system with Raspberry Pi Pico W (MicroPython) and Flask backend.
-Communication between device and server is implemented only via MQTT.
+Tento projekt rozsiruje IoT system o:
 
-## Project Structure
+1. ukladani telemetrie z MQTT do SQLite,
+2. REST API nad ulozenymi daty,
+3. pokrocile filtrovani a razeni telemetrie,
+4. webovy dashboard historickych dat na /dashboard.
 
-- `src/main_rpi.py` - firmware for Raspberry Pi Pico W
-- `src/main_server.py` - Flask entrypoint for dashboard
-- `src/mqtt.py` - MQTT client for server
-- `src/api.py` - shared in-memory state
-- `src/database.py` - SQLite database layer
-- `src/matplotlib_viz.py` - telemetry visualization helpers
-- `schema.sql` - database schema
-- `templates/` - HTML templates
-- `requirements.txt` - Python dependencies
-- `.gitignore` - ignored local files
+## Struktura projektu
 
-## Requirements
+- src/main_server.py - Flask aplikace (web + registrace API)
+- src/mqtt.py - MQTT klient a zpracovani prichozich zprav
+- src/api.py - REST API endpointy
+- src/database.py - DB vrstva (validace, SQL dotazy, CRUD)
+- src/matplotlib_viz.py - vykresleni grafu do PNG (base64)
+- schema.sql - schema databaze (devices + measurements)
+- templates/ - HTML sablony
+- test_api.ps1 - rychly test pokrocileho endpointu telemetry
+
+## Pozadavky
 
 - Python 3.10+
-- MQTT broker (default: `broker.hivemq.com`)
-- Raspberry Pi Pico W with DHT22
+- MQTT broker (vychozi broker.hivemq.com)
 
-## Setup
+## Instalace
 
-1. Create and activate virtual environment.
-2. Install dependencies:
+1. Vytvor virtualni prostredi a aktivuj ho.
+2. Nainstaluj zavislosti:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-1. Create `src/.env` from `src/.env.example` and fill values.
-2. Create `src/config.py` from `src/config.example.py` and fill values.
+3. Vytvor src/.env podle src/.env.example a dopln hodnoty.
 
-## Run Server
+Povinne promenne v .env:
+
+- FLASK_SECRET_KEY
+- LOGIN
+- MQTT_BROKER
+- DATABASE_FILE (volitelne, jinak src/telemetry.db)
+
+## Spusteni
 
 ```bash
 python src/main_server.py
 ```
 
+Server standardne bezi na portu 5050.
+
+## Databaze
+
+Schema je ulozeno v souboru schema.sql.
+
+Tabulky:
+
+1. devices
+	- id, login, first_seen, last_seen, last_uptime, measure_period, message_count
+2. measurements
+	- id, device_id, timestamp, temperature
+
+Mezi measurements.device_id a devices.id je cizi klic s ON DELETE CASCADE.
+
+Pri startu aplikace se automaticky:
+
+1. vytvori DB soubor, pokud neexistuje,
+2. aplikje schema,
+3. overi sloupce tabulek,
+4. pri neplatnem schematu tabulky znovu vytvori podle schema.sql.
+
+## MQTT ingest
+
+Odber temat:
+
+- cvut/nsi/2026/+/telemetry
+- cvut/nsi/2026/+/status
+
+Pri prijmu telemetry:
+
+1. zkontroluje se JSON payload,
+2. z topicu se ziska login zarizeni,
+3. vlozi se measurement,
+4. aktualizuje/zaklada se zaznam v devices.
+
+Nevalidni zprava aplikaci nesmi ukoncit - jen se zaloguje a ignoruje.
+
 ## REST API
 
-- `GET /api/devices`
-- `GET /api/devices/<login>`
-- `GET /api/measurements?login=<login>&limit=100`
+Zakladni endpointy:
 
-## Firmware Features
+- GET /api/devices
+- GET /api/devices/<device_id>
+- GET /api/telemetry/<id>
+- DELETE /api/telemetry/<id>
+- DELETE /api/devices/<device_id>
+- POST /api/telemetry
 
-- Wi-Fi connection + NTP sync (`tik.cesnet.cz`)
-- Periodic telemetry publish to `cvut/nsi/2026/<login>/telemetry` with QoS 1
-- LED command handling (`ON/OFF/TOGGLE`, case-insensitive)
-- Dynamic period update from `cvut/nsi/2026/<login>/period`
-- Alert blink when foreign telemetry reports temperature > 30 C
-- LWT status reporting to `cvut/nsi/2026/<login>/status`
+Pokrocile dotazovani:
+
+- GET /api/telemetry
+  - query: device_id, from, to
+  - headers: X-Sort-Field (timestamp|temperature), X-Sort-Order (asc|desc)
+  - response headers: X-Current-Count, X-Total-Count
+
+## Dashboard
+
+Historicky dashboard je dostupny na:
+
+- /dashboard
+
+Obsahuje:
+
+1. vyber zarizeni,
+2. absolutni okno (from, to),
+3. relativni okno (velikost + jednotka second/minute/hour/day),
+4. graf teploty v case.
+
+## Testovani
+
+Pokrocile API testy:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\test_api.ps1
+```
+
+Volitelne lze prepnout base URL:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\test_api.ps1 -BaseUrl http://127.0.0.1:5051
+```

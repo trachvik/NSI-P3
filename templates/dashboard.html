@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Historical Dashboard{% endblock %}
+{% block content %}
+    <h2>Historical Temperature Dashboard</h2>
+
+    {% if error %}
+        <p><strong>Error:</strong> {{ error }}</p>
+    {% endif %}
+
+    <form method="get" action="/dashboard" style="margin-bottom: 18px;">
+        <p>
+            <label for="device_id"><strong>Device:</strong></label>
+            <select id="device_id" name="device_id" required>
+                {% for d in devices %}
+                    <option value="{{ d.id }}" {% if form_values.device_id == d.id|string %}selected{% endif %}>
+                        {{ d.login }} (id={{ d.id }})
+                    </option>
+                {% endfor %}
+            </select>
+        </p>
+
+        <p>
+            <strong>Time mode:</strong>
+            <label>
+                <input type="radio" name="mode" value="absolute" {% if form_values.mode == 'absolute' %}checked{% endif %}>
+                Absolute
+            </label>
+            <label>
+                <input type="radio" name="mode" value="relative" {% if form_values.mode != 'absolute' %}checked{% endif %}>
+                Relative
+            </label>
+        </p>
+
+        <fieldset style="margin-bottom: 10px;">
+            <legend>Absolute window (ISO 8601)</legend>
+            <label for="from">From:</label>
+            <input type="text" id="from" name="from" value="{{ form_values.from }}" placeholder="2026-05-24T18:00:00Z" style="width: 280px;">
+            <label for="to">To:</label>
+            <input type="text" id="to" name="to" value="{{ form_values.to }}" placeholder="2026-05-24T20:00:00Z" style="width: 280px;">
+        </fieldset>
+
+        <fieldset style="margin-bottom: 10px;">
+            <legend>Relative window</legend>
+            <label for="window_size">Window size:</label>
+            <input type="number" id="window_size" name="window_size" min="1" value="{{ form_values.window_size }}" style="width: 90px;">
+            <label for="window_unit">Unit:</label>
+            <select id="window_unit" name="window_unit">
+                <option value="second" {% if form_values.window_unit == 'second' %}selected{% endif %}>second</option>
+                <option value="minute" {% if form_values.window_unit == 'minute' %}selected{% endif %}>minute</option>
+                <option value="hour" {% if form_values.window_unit == 'hour' %}selected{% endif %}>hour</option>
+                <option value="day" {% if form_values.window_unit == 'day' %}selected{% endif %}>day</option>
+            </select>
+        </fieldset>
+
+        <button type="submit">Show history</button>
+    </form>
+
+    <p>
+        Selected device: <strong>{{ selected_login or '-' }}</strong><br>
+        Returned points: <strong>{{ points_count }}</strong><br>
+        Unit: <strong>{{ temp_unit }}</strong>
+    </p>
+
+    {% if plot_url %}
+        <img src="data:image/png;base64,{{ plot_url }}" alt="Temperature history chart" style="max-width: 100%; border: 1px solid #ccc;">
+    {% else %}
+        <p><em>No data for selected filter.</em></p>
+    {% endif %}
+{% endblock %}

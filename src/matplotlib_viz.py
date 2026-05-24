@@ -1,10 +1,12 @@
 import io
 import base64
+from datetime import datetime
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 
 def get_filtered_data(history, args):
@@ -33,6 +35,36 @@ def build_plot_url(data, temp_unit="C"):
     plt.title("Temperature History")
     plt.ylabel(f"Temperature [{temp_unit}]")
     plt.xticks(rotation=45)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+    plt.close()
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def build_history_plot_url(data, temp_unit="C"):
+    if not data:
+        return None
+
+    x = [datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")) for row in data]
+    if temp_unit == "F":
+        y = [(row["temperature"] * 9.0 / 5.0) + 32.0 for row in data]
+    else:
+        y = [row["temperature"] for row in data]
+
+    plt.figure(figsize=(12, 4.8))
+    plt.plot(x, y, linestyle="-", color="tab:blue", linewidth=1.8)
+    plt.title("Temperature History")
+    plt.xlabel("Time")
+    plt.ylabel(f"Temperature [{temp_unit}]")
+
+    axis = plt.gca().xaxis
+    locator = mdates.AutoDateLocator(minticks=6, maxticks=10)
+    axis.set_major_locator(locator)
+    axis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
 

@@ -52,19 +52,19 @@ def _has_valid_schema(conn):
 
 
 def init_db():
+    # Create database from schema.sql and verify expected columns.
     conn = get_db_connection()
     try:
         if not SCHEMA_FILE.exists():
             raise RuntimeError(f"Missing schema file: {SCHEMA_FILE}")
 
-        # Create tables if they do not exist.
-        conn.executescript(SCHEMA_FILE.read_text(encoding="utf-8"))
+        schema_sql = SCHEMA_FILE.read_text(encoding="utf-8")
+        conn.executescript(schema_sql)
 
-        # If schema is wrong, recreate tables from schema.sql.
         if not _has_valid_schema(conn):
             conn.execute("DROP TABLE IF EXISTS measurements")
             conn.execute("DROP TABLE IF EXISTS devices")
-            conn.executescript(SCHEMA_FILE.read_text(encoding="utf-8"))
+            conn.executescript(schema_sql)
             if not _has_valid_schema(conn):
                 raise RuntimeError("Database schema is not valid")
 
@@ -102,11 +102,9 @@ def _parse_int(value, field_name):
 
 
 def validate_telemetry_payload(payload):
-    # Common validation used by both MQTT ingest and REST POST.
     if not isinstance(payload, dict):
         return None, "Payload is not a JSON object"
 
-    # Required by assignment.
     required_fields = ["temperature", "timestamp", "measure_period", "uptime"]
     missing = [field for field in required_fields if field not in payload]
     if missing:
@@ -140,7 +138,6 @@ def validate_telemetry_payload(payload):
 
 
 def save_telemetry(login, payload):
-    # Main "upsert device + insert measurement" logic.
     normalized, error = validate_telemetry_payload(payload)
     if error:
         return None, error
@@ -153,7 +150,6 @@ def save_telemetry(login, payload):
         ).fetchone()
 
         if device is None:
-            # First message from this login => create device row.
             conn.execute(
                 """
                 INSERT INTO devices (login, first_seen, last_seen, last_uptime, measure_period, message_count)
@@ -172,7 +168,6 @@ def save_telemetry(login, payload):
                 (login,),
             ).fetchone()
         else:
-            # Existing device => update last stats and increment count.
             conn.execute(
                 """
                 UPDATE devices
@@ -191,7 +186,6 @@ def save_telemetry(login, payload):
                 ),
             )
 
-        # Insert one measurement row for each valid message.
         insert_cursor = conn.execute(
             "INSERT INTO measurements (device_id, timestamp, temperature) VALUES (?, ?, ?)",
             (device["id"], normalized["timestamp"], normalized["temperature"]),
@@ -299,17 +293,17 @@ def get_measurements(login=None, limit=100):
 
 
 def get_telemetry_filtered(device_id=None, from_ts=None, to_ts=None, sort_field="timestamp", sort_order="desc"):
-    allowed_sort_fields = {
+    sort_fields = {
         "timestamp": "m.timestamp",
         "temperature": "m.temperature",
     }
-    allowed_sort_orders = {
+    sort_orders = {
         "asc": "ASC",
         "desc": "DESC",
     }
 
-    sort_field_sql = allowed_sort_fields[sort_field]
-    sort_order_sql = allowed_sort_orders[sort_order]
+    sort_field_sql = sort_fields[sort_field]
+    sort_order_sql = sort_orders[sort_order]
 
     where_parts = []
     params = []
@@ -425,7 +419,6 @@ def delete_device_by_id(device_id):
 
 
 def create_telemetry_from_api(payload):
-    # REST input format is slightly different than MQTT payload.
     if not isinstance(payload, dict):
         return None, "Invalid JSON body"
 
@@ -436,9 +429,7 @@ def create_telemetry_from_api(payload):
     device_login = None
     existing_device = None
 
-    # Accept both numeric device_id and string login in API body.
     if isinstance(device_field, int) or (isinstance(device_field, str) and device_field.isdigit()):
-        # API can send device as numeric id.
         device_id, err = _parse_int(device_field, "device")
         if err:
             return None, err
@@ -447,7 +438,6 @@ def create_telemetry_from_api(payload):
             return None, "Device not found"
         device_login = existing_device["login"]
     elif isinstance(device_field, str):
-        # API can also send device as login string.
         device_login = device_field.strip()
         if not device_login:
             return None, "Invalid device"
@@ -480,7 +470,6 @@ def create_telemetry_from_api(payload):
         if existing_device is not None:
             uptime = existing_device["last_uptime"]
         else:
-            # New device from API without uptime uses zero as startup fallback.
             uptime = 0.0
     else:
         uptime, err = _parse_float(uptime_raw, "uptime")

@@ -1,13 +1,14 @@
 import os
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 from flask import Flask, render_template, request, redirect, url_for, session
 from dotenv import load_dotenv
 
 from api import api_bp, device_state, telemetry_history
-from database import init_db
+from database import init_db, get_devices, get_telemetry_filtered, is_valid_iso8601
 from mqtt import init_mqtt, publish_period_command
-from matplotlib_viz import get_filtered_data, build_plot_url
+from matplotlib_viz import get_filtered_data, build_plot_url, build_history_plot_url
 
 
 ENV_PATH = Path(__file__).with_name(".env")
@@ -68,6 +69,126 @@ def _render_dashboard(error=None, success=None, args=None):
         limit_n=args.get("limit_n", 30),
         error=error,
         success=success,
+    )
+
+
+def _dashboard_time_window(args):
+    mode = (args.get("mode") or "relative").lower()
+    if mode not in ("absolute", "relative"):
+        mode = "relative"
+
+    now_utc = datetime.now(timezone.utc)
+    form_values = {
+        "mode": mode,
+        "device_id": args.get("device_id") or "",
+        "from": args.get("from") or "",
+        "to": args.get("to") or "",
+        "window_size": args.get("window_size") or "30",
+        "window_unit": (args.get("window_unit") or "minute").lower(),
+    }
+
+    if mode == "absolute":
+        from_raw = (args.get("from") or "").strip()
+        to_raw = (args.get("to") or "").strip()
+
+        if not from_raw or not to_raw:
+            return None, None, form_values, "For absolute mode, both 'from' and 'to' are required."
+        if not is_valid_iso8601(from_raw) or not is_valid_iso8601(to_raw):
+            return None, None, form_values, "Absolute mode requires ISO 8601 timestamps."
+
+        from_dt = datetime.fromisoformat(from_raw.replace("Z", "+00:00"))
+        to_dt = datetime.fromisoformat(to_raw.replace("Z", "+00:00"))
+        if from_dt > to_dt:
+            return None, None, form_values, "In absolute mode, 'from' must not be later than 'to'."
+        return from_raw, to_raw, form_values, None
+
+    size_raw = args.get("window_size", "30")
+    unit = (args.get("window_unit") or "minute").lower()
+    if unit not in ("second", "minute", "hour", "day"):
+        return None, None, form_values, "Relative mode unit must be second/minute/hour/day."
+
+    try:
+        size = int(size_raw)
+    except ValueError:
+        return None, None, form_values, "Relative mode window size must be an integer."
+
+    if size < 1:
+        return None, None, form_values, "Relative mode window size must be at least 1."
+
+    seconds_per_unit = {
+        "second": 1,
+        "minute": 60,
+        "hour": 3600,
+        "day": 86400,
+    }
+    window_seconds = size * seconds_per_unit[unit]
+
+    to_dt = now_utc
+    from_dt = now_utc - timedelta(seconds=window_seconds)
+    from_iso = from_dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    to_iso = to_dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    form_values["from"] = from_iso
+    form_values["to"] = to_iso
+    return from_iso, to_iso, form_values, None
+
+
+@app.route("/dashboard")
+def dashboard_history():
+    devices = get_devices()
+    selected_device_raw = request.args.get("device_id")
+
+    if not devices:
+        return render_template(
+            "dashboard.html",
+            devices=[],
+            form_values={
+                "mode": "relative",
+                "device_id": "",
+                "from": "",
+                "to": "",
+                "window_size": "30",
+                "window_unit": "minute",
+            },
+            error="No registered devices found.",
+            plot_url=None,
+            points_count=0,
+            selected_login=None,
+        )
+
+    selected_device_id = devices[0]["id"]
+    if selected_device_raw:
+        try:
+            selected_device_id = int(selected_device_raw)
+        except ValueError:
+            pass
+
+    from_ts, to_ts, form_values, error = _dashboard_time_window(request.args)
+    form_values["device_id"] = str(selected_device_id)
+
+    selected_login = next((d["login"] for d in devices if d["id"] == selected_device_id), "-")
+
+    rows = []
+    if error is None:
+        rows = get_telemetry_filtered(
+            device_id=selected_device_id,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            sort_field="timestamp",
+            sort_order="asc",
+        )
+
+    temp_unit = _get_temp_unit()
+    plot_url = build_history_plot_url(rows, temp_unit=temp_unit)
+
+    return render_template(
+        "dashboard.html",
+        devices=devices,
+        form_values=form_values,
+        error=error,
+        plot_url=plot_url,
+        points_count=len(rows),
+        selected_login=selected_login,
+        temp_unit=temp_unit,
     )
 
 
