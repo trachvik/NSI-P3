@@ -6,10 +6,10 @@ __pycache__/
 # Virtual environment
 venv/
 .venv/
-.env/
+src/.env
 
 # Local secrets for MicroPython
-src/secrets_local.py
+src/config.py
 
 # IDE
 .vscode/

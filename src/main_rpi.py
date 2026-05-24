@@ -5,13 +5,18 @@ import json
 import machine
 import dht
 from umqtt.robust import MQTTClient
-from secrets_local import SSID, PASSWORD, MQTT_BROKER, LOGIN
+from config import SSID, PASSWORD, MQTT_BROKER, LOGIN
 
 toggle_counter = 0
 
 TOPIC_PUB_TELEMETRY = f"cvut/nsi/2026/{LOGIN}/telemetry".encode('utf-8')
 TOPIC_SUB_LED = f"cvut/nsi/2026/{LOGIN}/led".encode('utf-8')
+# Only this device should react to period updates for this login.
+TOPIC_SUB_PERIOD = f"cvut/nsi/2026/{LOGIN}/period".encode('utf-8')
 TOPIC_SUB_ALL_TELEMETRY = b"cvut/nsi/2026/+/telemetry"
+
+# Current measurement/publish period in seconds.
+measure_period_s = 10
 
 
 sensor = dht.DHT22(machine.Pin(20))
@@ -39,6 +44,7 @@ def warning_isr(t):
 def connect_wifi(timeout_s=15):
     wlan.connect(SSID, PASSWORD)
     start = time.ticks_ms()
+    # Wait at most timeout_s seconds.
     while not wlan.isconnected():
         if time.ticks_diff(time.ticks_ms(), start) > timeout_s * 1000:
             return False
@@ -49,34 +55,62 @@ def connect_wifi(timeout_s=15):
 def iso8601_utc_now():
     y, mo, d, h, mi, s, _, _ = time.gmtime(time.time())
     ms = time.ticks_ms() % 1000
+    # Z suffix means UTC timezone (ISO 8601 TZD).
     return "{:04d}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}.{:03d}Z".format(
         y, mo, d, h, mi, s, ms
     )
 
+
+def update_measure_period(new_period_s):
+    global measure_period_s
+    measure_period_s = new_period_s
+    # Apply period update while program is running.
+    publish_timer.init(period=measure_period_s * 1000, mode=machine.Timer.PERIODIC, callback=publish_isr)
+
 def mqtt_callback(topic, msg):
     topic_str = topic.decode('utf-8')
+    # Case-insensitive ON/OFF/TOGGLE commands.
     msg_str = msg.decode('utf-8').strip().upper()
     
     if topic_str == TOPIC_SUB_LED.decode('utf-8'):
-        if msg_str == "ON":  led.value(1); print("Příchozí příkaz: ZAPNOUT")
-        elif msg_str == "OFF": led.value(0); print("Příchozí příkaz: VYPNOUT")
-        elif msg_str == "TOGGLE": led.toggle(); print("Příchozí příkaz: TOGGLE")
+        if msg_str == "ON":
+            led.value(1)
+            print("Incoming command: ON")
+        elif msg_str == "OFF":
+            led.value(0)
+            print("Incoming command: OFF")
+        elif msg_str == "TOGGLE":
+            led.toggle()
+            print("Incoming command: TOGGLE")
+    elif topic_str == TOPIC_SUB_PERIOD.decode('utf-8'):
+        try:
+            requested_period = int(msg.decode('utf-8').strip())
+            # Second validation guard directly on the device.
+            if 1 <= requested_period <= 300:
+                update_measure_period(requested_period)
+                print("Incoming command: PERIOD={}s".format(requested_period))
+            else:
+                print("Invalid period: out of range 1-300 s")
+        except ValueError:
+            print("Invalid period: not an integer")
 
     elif topic_str.endswith("/telemetry"):
+        # cvut/nsi/2026/<login>/telemetry => login is at index 3.
         sender_login = topic_str.split('/')[3]
         if sender_login != LOGIN:
             try:
                 data = json.loads(msg.decode("utf-8"))
                 temperature = data.get("temperature")
+                # Ignore invalid/non-numeric temperature.
                 if isinstance(temperature, (int, float)) and temperature > 30:
                     warning_timer.init(period=100, mode=machine.Timer.ONE_SHOT, callback=warning_isr)
             except ValueError:
-                print("Neplatny JSON")
+                print("Invalid JSON")
 
 
 wlan = network.WLAN(network.STA_IF)
 wlan.active(True)
-wlan.disconnect()  # Disconnect from any previously connected network.
+wlan.disconnect()  # Reset previous Wi-Fi state and start clean.
 
 if not connect_wifi(timeout_s=15): # Wait up to 15 seconds for Wi-Fi connection
     raise RuntimeError("Wi-Fi connection failed")
@@ -88,7 +122,7 @@ except OSError:
     pass
 
 publish_timer = machine.Timer()
-publish_timer.init(period=10000, mode=machine.Timer.PERIODIC, callback=publish_isr)
+publish_timer.init(period=measure_period_s * 1000, mode=machine.Timer.PERIODIC, callback=publish_isr)
 
 
 client_id = f"rpi_pico_{LOGIN}_{machine.unique_id().hex()}"
@@ -96,10 +130,12 @@ client = MQTTClient(client_id=client_id, server=MQTT_BROKER)
 client.set_callback(mqtt_callback)
 client.connect()
 client.subscribe(TOPIC_SUB_LED)
+client.subscribe(TOPIC_SUB_PERIOD)
 client.subscribe(TOPIC_SUB_ALL_TELEMETRY)
 
 
 while True:
+    # Non-blocking "asynchronous" MQTT polling.
     client.check_msg()   
     if publish_requested:
         publish_requested = False
@@ -110,7 +146,8 @@ while True:
                 "uptime": time.ticks_ms() / 1000,
                 "led_state": led.value(),
                 "temperature": sensor.temperature(),
-                "humidity": sensor.humidity()
+                "humidity": sensor.humidity(),
+                "measure_period": measure_period_s
             }
             payload_json = json.dumps(payload)
             client.publish(TOPIC_PUB_TELEMETRY, payload_json.encode('utf-8'), qos=1)

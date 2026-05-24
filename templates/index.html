@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Telemetry Dashboard{% endblock %}
+{% block content %}
+    <h2>Current Device State</h2>
+
+    {% if error %}
+        <p><strong>Error:</strong> {{ error }}</p>
+    {% endif %}
+
+    {% if success %}
+        <p><strong>Success:</strong> {{ success }}</p>
+    {% endif %}
+
+    <p>Login: <strong>{{ state.login }}</strong></p>
+    <p>Timestamp: <strong>{{ state.timestamp }}</strong></p>
+    <p>Temperature: <strong>{{ state.temperature }}</strong></p>
+    <p>Humidity: <strong>{{ state.humidity }}</strong></p>
+    <p>LED state: <strong>{{ state.led_state }}</strong></p>
+    <p>Measure period: <strong>{{ state.measure_period }}</strong></p>
+
+    <h2>Update Telemetry Period</h2>
+    <form action="/update_telemetry_period" method="get">
+        <label for="period">Period (seconds, 1-300):</label>
+        <input type="number" id="period" name="period" min="1" max="300" required>
+        <button type="submit">Update</button>
+    </form>
+{% endblock %}
